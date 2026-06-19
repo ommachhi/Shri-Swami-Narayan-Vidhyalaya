@@ -4,9 +4,13 @@ const helmet = require('helmet');
 const dotenv = require('dotenv');
 const connectDB = require('./config/db');
 
+const dns = require('dns');
+dns.setDefaultResultOrder('ipv4first'); // Force IPv4 to fix Nodemailer ENETUNREACH on Railway
+
 dotenv.config();
 
 const app = express();
+app.set('trust proxy', 1); // Fix express-rate-limit proxy warning
 
 // Connect to database
 connectDB();
