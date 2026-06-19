@@ -20,7 +20,8 @@ const getStudents = async (req, res) => {
     }
 
     const students = await Student.find(query)
-      .sort({ rank: 1 })
+      .collation({ locale: 'en_US', numericOrdering: true })
+      .sort({ originalRollNo: 1, rank: 1 })
       .limit(limit * 1)
       .skip((page - 1) * limit)
       .exec();

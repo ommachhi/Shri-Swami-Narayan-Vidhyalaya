@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import api from '../../services/api';
 import { toast } from 'react-toastify';
-import { FiUploadCloud, FiFileText } from 'react-icons/fi';
+import { FiUploadCloud, FiFileText, FiTrash2 } from 'react-icons/fi';
 
 const Upload = () => {
   const [file, setFile] = useState(null);
@@ -15,6 +15,13 @@ const Upload = () => {
   const [batches, setBatches] = useState([]);
   const [fetchingBatches, setFetchingBatches] = useState(false);
   
+  // States for inline editing
+  const [editingBatchId, setEditingBatchId] = useState(null);
+  const [editingStudents, setEditingStudents] = useState([]);
+  const [batchSubjectsTemplate, setBatchSubjectsTemplate] = useState([]);
+  const [loadingEdit, setLoadingEdit] = useState(false);
+  const [savingEdit, setSavingEdit] = useState(false);
+
   // Ref for hidden input for updating
   const fileInputRef = React.useRef(null);
   const [updatingBatchId, setUpdatingBatchId] = useState(null);
@@ -43,6 +50,73 @@ const Upload = () => {
       fetchBatches();
     } catch (error) {
       toast.error('Failed to delete file');
+    }
+  };
+
+  const handleEditInlineClick = async (id) => {
+    setEditingBatchId(id);
+    setLoadingEdit(true);
+    try {
+      const res = await api.get(`/upload/batch/${id}/students`);
+      setEditingStudents(res.data);
+      if (res.data.length > 0) {
+        setBatchSubjectsTemplate(res.data[0].subjects.map(s => ({ name: s.name, maxMarks: s.maxMarks, marks: 0 })));
+      }
+    } catch (error) {
+      toast.error('Failed to load students for editing');
+      setEditingBatchId(null);
+    } finally {
+      setLoadingEdit(false);
+    }
+  };
+
+  const handleStudentFieldChange = (index, field, value) => {
+    const updated = [...editingStudents];
+    updated[index] = { ...updated[index], [field]: value };
+    setEditingStudents(updated);
+  };
+
+  const handleStudentSubjectChange = (studentIndex, subjectIndex, value) => {
+    const updated = [...editingStudents];
+    const newSubjects = [...updated[studentIndex].subjects];
+    newSubjects[subjectIndex] = { ...newSubjects[subjectIndex], marks: value };
+    updated[studentIndex] = { ...updated[studentIndex], subjects: newSubjects };
+    setEditingStudents(updated);
+  };
+
+  const handleRemoveStudent = (index) => {
+    if (window.confirm("Are you sure you want to remove this student row?")) {
+      const updated = [...editingStudents];
+      updated.splice(index, 1);
+      setEditingStudents(updated);
+    }
+  };
+
+  const handleAddStudent = () => {
+    const batch = batches.find(b => b._id === editingBatchId);
+    const newStudent = {
+      _id: null,
+      originalRollNo: '',
+      name: '',
+      subjects: batchSubjectsTemplate,
+      academicYear: batch?.academicYear || formData.academicYear,
+      className: batch?.className || formData.className,
+      examName: batch?.examName || formData.examName
+    };
+    setEditingStudents([...editingStudents, newStudent]);
+  };
+
+  const handleSaveInlineEdits = async () => {
+    setSavingEdit(true);
+    try {
+      await api.put(`/upload/batch/${editingBatchId}/students`, { students: editingStudents });
+      toast.success('Batch updated successfully');
+      setEditingBatchId(null);
+      fetchBatches();
+    } catch (error) {
+      toast.error('Failed to save changes');
+    } finally {
+      setSavingEdit(false);
     }
   };
 
@@ -270,11 +344,18 @@ const Upload = () => {
                       <div className="text-xs text-gray-400">{batch.academicYear}</div>
                     </td>
                     <td className="py-3 px-4 text-gray-700">{batch.totalStudents}</td>
-                    <td className="py-3 px-4 text-right">
+                    <td className="py-3 px-4 text-right whitespace-nowrap">
+                      <button
+                        onClick={() => handleEditInlineClick(batch._id)}
+                        className="text-green-500 hover:text-white hover:bg-green-500 px-3 py-1 rounded transition-colors border border-green-200 mr-2"
+                        title="Edit Data Inline"
+                      >
+                        Edit Data
+                      </button>
                       <button
                         onClick={() => handleUpdateClick(batch._id)}
                         className="text-blue-500 hover:text-white hover:bg-blue-500 px-3 py-1 rounded transition-colors border border-blue-200 mr-2"
-                        title="Update File"
+                        title="Upload Updated File"
                       >
                         Update
                       </button>
@@ -293,6 +374,118 @@ const Upload = () => {
           </div>
         )}
       </div>
+      
+      {/* Inline Edit Modal */}
+      {editingBatchId && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-6xl max-h-[95vh] flex flex-col overflow-hidden">
+            <div className="p-6 border-b border-gray-100 flex justify-between items-center bg-gray-50">
+              <div>
+                <h3 className="text-xl font-bold text-gray-800">Edit Batch Data</h3>
+                <p className="text-sm text-gray-500">Modify student marks and details directly</p>
+              </div>
+              <div className="flex space-x-3">
+                <button
+                  onClick={() => setEditingBatchId(null)}
+                  className="px-4 py-2 border border-gray-300 rounded-lg text-gray-600 hover:bg-gray-100 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleSaveInlineEdits}
+                  disabled={savingEdit || loadingEdit}
+                  className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary-light transition-colors flex items-center"
+                >
+                  {savingEdit ? 'Saving...' : 'Save Changes'}
+                </button>
+              </div>
+            </div>
+            <div className="p-0 overflow-auto flex-1">
+              {loadingEdit ? (
+                <div className="flex justify-center items-center h-40">
+                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+                </div>
+              ) : (
+                <table className="w-full text-left border-collapse min-w-max">
+                  <thead className="bg-gray-50 sticky top-0 shadow-sm z-10">
+                    <tr className="text-sm text-gray-600">
+                      <th className="p-3 border-b font-medium">Roll No</th>
+                      <th className="p-3 border-b font-medium">Name</th>
+                      <th className="p-3 border-b font-medium text-center">Mobile No</th>
+                      <th className="p-3 border-b font-medium text-center">Email ID</th>
+                      {editingStudents[0]?.subjects.map((sub, idx) => (
+                        <th key={idx} className="p-3 border-b font-medium text-center">{sub.name}</th>
+                      ))}
+                      <th className="p-3 border-b font-medium text-center">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {editingStudents.map((st, sIdx) => (
+                      <tr key={sIdx} className="border-b border-gray-100 hover:bg-gray-50/50">
+                        <td className="p-2">
+                          <input
+                            type="text"
+                            value={st.originalRollNo || ''}
+                            onChange={(e) => handleStudentFieldChange(sIdx, 'originalRollNo', e.target.value)}
+                            className="w-20 px-2 py-1 border border-gray-200 rounded text-sm outline-none focus:border-primary"
+                          />
+                        </td>
+                        <td className="p-2">
+                          <input
+                            type="text"
+                            value={st.name || ''}
+                            onChange={(e) => handleStudentFieldChange(sIdx, 'name', e.target.value)}
+                            className="w-40 px-2 py-1 border border-gray-200 rounded text-sm outline-none focus:border-primary"
+                          />
+                        </td>
+                        <td className="p-2">
+                          <input
+                            type="text"
+                            value={st.mobile || ''}
+                            onChange={(e) => handleStudentFieldChange(sIdx, 'mobile', e.target.value)}
+                            className="w-28 px-2 py-1 border border-gray-200 rounded text-sm outline-none focus:border-primary text-center"
+                          />
+                        </td>
+                        <td className="p-2">
+                          <input
+                            type="text"
+                            value={st.parentEmail || ''}
+                            onChange={(e) => handleStudentFieldChange(sIdx, 'parentEmail', e.target.value)}
+                            className="w-40 px-2 py-1 border border-gray-200 rounded text-sm outline-none focus:border-primary text-center"
+                          />
+                        </td>
+                        {st.subjects.map((sub, subIdx) => (
+                          <td key={subIdx} className="p-2 text-center">
+                            <input
+                              type="number"
+                              value={sub.marks !== undefined ? sub.marks : ''}
+                              onChange={(e) => handleStudentSubjectChange(sIdx, subIdx, e.target.value)}
+                              className="w-16 px-2 py-1 border border-gray-200 rounded text-sm text-center outline-none focus:border-primary"
+                            />
+                          </td>
+                        ))}
+                        <td className="p-2 text-center">
+                          <button onClick={() => handleRemoveStudent(sIdx)} className="text-red-500 hover:text-red-700 bg-red-50 hover:bg-red-100 p-1.5 rounded" title="Remove Row">
+                            <FiTrash2 />
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+              {!loadingEdit && editingBatchId && (
+                <div className="p-4 border-t border-gray-100 bg-gray-50 flex justify-center">
+                   <button onClick={handleAddStudent} className="px-4 py-2 border border-dashed border-primary text-primary hover:bg-blue-50 rounded-lg flex items-center transition-colors">
+                     + Add New Student Row
+                   </button>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       <input
         type="file"
         accept=".xlsx, .xls"

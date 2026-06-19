@@ -4,7 +4,7 @@ const calculateResult = (subjects, maxMarksConfig) => {
   let hasFailedSubject = false;
 
   const processedSubjects = subjects.map(sub => {
-    const maxMarks = maxMarksConfig[sub.name] || 100;
+    const maxMarks = (maxMarksConfig && maxMarksConfig[sub.name]) || sub.maxMarks || 100;
     const marks = Number(sub.marks) || 0;
     
     total += marks;

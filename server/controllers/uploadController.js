@@ -5,6 +5,7 @@ const Student = require('../models/Student');
 const { parseExcel } = require('../utils/excelParser');
 const { calculateResult } = require('../utils/gradeCalc');
 const { calculateRanksForBatch } = require('../utils/rankCalc');
+const xlsx = require('xlsx');
 
 const uploadExcel = async (req, res) => {
   try {
@@ -215,4 +216,117 @@ const updateBatch = async (req, res) => {
     }
 };
 
-module.exports = { uploadExcel, getBatches, deleteBatch, updateBatch };
+const downloadBatchExcel = async (req, res) => {
+    try {
+        const batchId = req.params.id;
+        const batch = await UploadBatch.findById(batchId);
+        if (!batch) return res.status(404).json({ message: 'Batch not found' });
+
+        const students = await Student.find({ uploadBatchId: batchId }).sort({ originalRollNo: 1 });
+        
+        const data = students.map(st => {
+            const row = {
+                'Roll Number': st.originalRollNo || st.rollNo,
+                'Student Name': st.name,
+                'Parent Name': st.parentName || '',
+                'Mobile Number': st.mobile,
+                'Parent Email': st.parentEmail || '',
+                'Date Of Birth': st.dateOfBirth || ''
+            };
+            st.subjects.forEach(sub => {
+                row[sub.name] = sub.marks;
+            });
+            return row;
+        });
+
+        const ws = xlsx.utils.json_to_sheet(data);
+        const wb = xlsx.utils.book_new();
+        xlsx.utils.book_append_sheet(wb, ws, 'Results');
+
+        const buffer = xlsx.write(wb, { type: 'buffer', bookType: 'xlsx' });
+        
+        res.setHeader('Content-Disposition', `attachment; filename="Edit_${batch.fileName}"`);
+        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        res.send(buffer);
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: 'Server error' });
+    }
+};
+
+const getBatchStudents = async (req, res) => {
+    try {
+        const batchId = req.params.id;
+        const students = await Student.find({ uploadBatchId: batchId })
+            .collation({ locale: 'en_US', numericOrdering: true })
+            .sort({ originalRollNo: 1 });
+        res.json(students);
+    } catch (error) {
+        res.status(500).json({ message: 'Server error' });
+    }
+};
+
+const updateBatchInline = async (req, res) => {
+    try {
+        const batchId = req.params.id;
+        const { students } = req.body;
+        
+        const batch = await UploadBatch.findById(batchId);
+        if (!batch) return res.status(404).json({ message: 'Batch not found' });
+
+        // Find existing students in DB
+        const existingStudents = await Student.find({ uploadBatchId: batchId });
+        
+        // Find which ones to delete
+        const incomingIds = students.filter(s => s._id).map(s => s._id.toString());
+        const studentsToDelete = existingStudents.filter(s => !incomingIds.includes(s._id.toString()));
+        
+        for (const st of studentsToDelete) {
+            await Student.findByIdAndDelete(st._id);
+        }
+        
+        for (const st of students) {
+            const resultData = calculateResult(st.subjects, {});
+            
+            const rollNo = `${st.academicYear || batch.academicYear}-${st.className || batch.className}-${st.examName || batch.examName}-${st.originalRollNo}`;
+            
+            const studentData = {
+                name: st.name,
+                originalRollNo: st.originalRollNo,
+                rollNo: rollNo,
+                parentName: st.parentName || '',
+                mobile: st.mobile || '',
+                parentEmail: st.parentEmail || '',
+                dateOfBirth: st.dateOfBirth || '',
+                className: st.className || batch.className,
+                examName: st.examName || batch.examName,
+                academicYear: st.academicYear || batch.academicYear,
+                uploadBatchId: batchId,
+                ...resultData
+            };
+
+            if (st._id) {
+                await Student.findByIdAndUpdate(st._id, studentData);
+            } else {
+                // For new student rows
+                const existing = await Student.findOne({ rollNo });
+                if (!existing) {
+                    await Student.create(studentData);
+                }
+            }
+        }
+        
+        const newCount = await Student.countDocuments({ uploadBatchId: batchId });
+        batch.totalStudents = newCount;
+        await batch.save();
+
+        await calculateRanksForBatch(batchId);
+        
+        res.json({ message: 'Batch updated successfully' });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: 'Server error' });
+    }
+};
+
+module.exports = { uploadExcel, getBatches, deleteBatch, updateBatch, downloadBatchExcel, getBatchStudents, updateBatchInline };
